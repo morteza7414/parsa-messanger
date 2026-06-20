@@ -82,6 +82,11 @@ import androidx.lifecycle.lifecycleScope
 import android.app.Activity
 import android.content.Intent
 import android.provider.Telephony
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.layout.Box
+
 
 
 class MainActivity : ComponentActivity() {
@@ -98,7 +103,8 @@ class MainActivity : ComponentActivity() {
             loadExistingSms(this@MainActivity, dao)
         }
 
-        requestDefaultSmsApp(this)
+        requestDefaultSmsRole()
+
 
 
 
@@ -113,7 +119,6 @@ class MainActivity : ComponentActivity() {
             100
         )
 
-        requestSmsRole()
         enableEdgeToEdge()
 
 
@@ -125,23 +130,31 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun requestSmsRole() {
-        if (
-            ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.SEND_SMS
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            permissionLauncher.launch(Manifest.permission.SEND_SMS)
-        }
-
+    private fun requestDefaultSmsRole() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val roleManager = getSystemService(RoleManager::class.java)
-            if (roleManager != null && !roleManager.isRoleHeld(RoleManager.ROLE_SMS)) {
-                startActivity(roleManager.createRequestRoleIntent(RoleManager.ROLE_SMS))
+
+            if (
+                roleManager != null &&
+                roleManager.isRoleAvailable(RoleManager.ROLE_SMS) &&
+                !roleManager.isRoleHeld(RoleManager.ROLE_SMS)
+            ) {
+                val intent = roleManager.createRequestRoleIntent(RoleManager.ROLE_SMS)
+                startActivity(intent)
+            }
+
+        } else {
+            if (Telephony.Sms.getDefaultSmsPackage(this) != packageName) {
+                val intent = Intent(Telephony.Sms.Intents.ACTION_CHANGE_DEFAULT)
+                intent.putExtra(
+                    Telephony.Sms.Intents.EXTRA_PACKAGE_NAME,
+                    packageName
+                )
+                startActivity(intent)
             }
         }
     }
+
 }
 
 data class Chat(
@@ -152,8 +165,9 @@ data class Chat(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MessengerScreen() {
-    val context = LocalContext.current
 
+    val context = LocalContext.current
+    var categoryToDelete by remember { mutableStateOf<String?>(null) }
     var selectedChat by remember { mutableStateOf<Chat?>(null) }
     var search by remember { mutableStateOf("") }
     var showSearch by remember { mutableStateOf(false) }
@@ -167,12 +181,15 @@ fun MessengerScreen() {
         mutableStateListOf(
             "All",
             "Personal",
-            "Bank"
+//            "Bank"
         )
     }
-
     val dao = remember { AppDatabase.getDatabase(context).messageDao() }
     val roomChats by dao.getConversations().collectAsState(initial = emptyList())
+
+    BackHandler(enabled = selectedChat != null) {
+        selectedChat = null
+    }
 
 
     val chats = roomChats
@@ -221,6 +238,9 @@ fun MessengerScreen() {
         )
         return
     }
+
+
+
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -287,16 +307,20 @@ fun MessengerScreen() {
                     onSearchChange = { search = it },
                     onToggleSearch = {
                         showSearch = !showSearch
-                        if (!showSearch) {
-                            search = ""
-                        }
+                        if (!showSearch) search = ""
                     },
                     onCategorySelected = { selectedCategory = it },
                     onAddCategoryClick = { showAddCategoryDialog = true },
                     onChatClick = { chat ->
                         selectedChat = chat
+                    },
+                    onCategoryLongClick = { category ->      // ✅ این اضافه شود
+                        if (category != "All" && category != "Personal" && category != "Bank") {
+                            categoryToDelete = category
+                        }
                     }
                 )
+
             }
 
             1 -> {
@@ -338,6 +362,32 @@ fun MessengerScreen() {
             }
         )
     }
+
+    categoryToDelete?.let { category ->
+        AlertDialog(
+            onDismissRequest = { categoryToDelete = null },
+            title = { Text("Delete Category") },
+            text = { Text("Do you want to delete \"$category\"?") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        categories.remove(category)
+                        selectedCategory = "All"
+                        categoryToDelete = null
+                    }
+                ) {
+                    Text("Yes")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { categoryToDelete = null }) {
+                    Text("No")
+                }
+            }
+        )
+    }
+
+
 }
 
 @Composable
@@ -352,7 +402,8 @@ private fun MessagesHomeContent(
     onToggleSearch: () -> Unit,
     onCategorySelected: (String) -> Unit,
     onAddCategoryClick: () -> Unit,
-    onChatClick: (Chat) -> Unit
+    onChatClick: (Chat) -> Unit,
+    onCategoryLongClick: (String) -> Unit,
 ) {
     Column(
         modifier = modifier
@@ -385,8 +436,11 @@ private fun MessagesHomeContent(
             categories = categories,
             selectedCategory = selectedCategory,
             onCategorySelected = onCategorySelected,
-            onAddCategoryClick = onAddCategoryClick
+            onAddCategoryClick = onAddCategoryClick,
+            onCategoryLongClick = onCategoryLongClick
         )
+
+
 
         Spacer(modifier = Modifier.height(12.dp))
 
@@ -531,12 +585,14 @@ fun SearchBar(
     )
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun CategoryChipsRow(
     categories: List<String>,
     selectedCategory: String,
     onCategorySelected: (String) -> Unit,
-    onAddCategoryClick: () -> Unit
+    onAddCategoryClick: () -> Unit,
+    onCategoryLongClick: (String) -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -546,19 +602,42 @@ private fun CategoryChipsRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         categories.forEach { title ->
-            FilterChip(
-                selected = selectedCategory == title,
-                onClick = { onCategorySelected(title) },
-                label = { Text(title) },
-                shape = RoundedCornerShape(20.dp),
-                border = null,
-                colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = BluePrimary,
-                    selectedLabelColor = Color.White,
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.40f),
-                    labelColor = MaterialTheme.colorScheme.onSurfaceVariant
-                ),
-            )
+
+            val isSelected = selectedCategory == title
+
+            Box(
+                modifier = Modifier
+                    .height(34.dp)
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(
+                        if (isSelected) {
+                            BluePrimary
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.40f)
+                        }
+                    )
+                    .combinedClickable(
+                        onClick = {
+                            onCategorySelected(title)
+                        },
+                        onLongClick = {
+                            onCategoryLongClick(title)
+                        }
+                    )
+                    .padding(horizontal = 14.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = title,
+                    color = if (isSelected) {
+                        Color.White
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    fontSize = 14.sp,
+                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                )
+            }
         }
 
         OutlinedButton(
@@ -588,6 +667,8 @@ private fun CategoryChipsRow(
         }
     }
 }
+
+
 
 @Composable
 fun ChatItem(
@@ -1076,17 +1157,3 @@ private fun isBankLikeMessage(
 }
 
 
-fun requestDefaultSmsApp(activity: Activity) {
-
-    if (Telephony.Sms.getDefaultSmsPackage(activity) != activity.packageName) {
-
-        val intent = Intent(Telephony.Sms.Intents.ACTION_CHANGE_DEFAULT)
-
-        intent.putExtra(
-            Telephony.Sms.Intents.EXTRA_PACKAGE_NAME,
-            activity.packageName
-        )
-
-        activity.startActivity(intent)
-    }
-}

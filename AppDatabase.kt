@@ -11,7 +11,7 @@ import androidx.room.RoomDatabase
         CategoryEntity::class,
         ChatCategoryEntity::class
     ],
-    version = 5,
+    version = 1,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
