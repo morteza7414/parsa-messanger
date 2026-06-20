@@ -8,30 +8,30 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
-class SmsReceiver : BroadcastReceiver() {
+class SmsReceiverOld : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
 
-        if (intent.action == Telephony.Sms.Intents.SMS_RECEIVED_ACTION) {
+        if (Telephony.Sms.Intents.SMS_RECEIVED_ACTION == intent.action) {
+
+            val db = AppDatabase.getDatabase(context)
+            val dao = db.messageDao()
 
             val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
 
-            val dao = AppDatabase.getDatabase(context).messageDao()
-
             CoroutineScope(Dispatchers.IO).launch {
 
-                messages.forEach { sms ->
+                for (sms in messages) {
 
-                    val address = sms.originatingAddress ?: return@forEach
+                    val address = sms.originatingAddress ?: "unknown"
                     val body = sms.messageBody
-                    val date = sms.timestampMillis
 
                     dao.insert(
                         MessageEntity(
-                            address = PhoneUtils.normalize(address),
+                            address = address,
                             body = body,
-                            timestamp = date,
-                            isMine = false
+                            isMine = false,
+                            timestamp = System.currentTimeMillis()
                         )
                     )
                 }

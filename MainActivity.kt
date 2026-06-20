@@ -37,8 +37,6 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomSheetDefaults
-import androidx.compose.material3.Button
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -57,7 +55,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
-import androidx.compose.material3.ElevatedCard
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -80,6 +77,12 @@ import androidx.core.content.ContextCompat
 import coil.compose.AsyncImage
 import com.example.parsamessenger.ui.theme.BluePrimary
 import com.example.parsamessenger.ui.theme.ParsaMessengerTheme
+import kotlinx.coroutines.launch
+import androidx.lifecycle.lifecycleScope
+import android.app.Activity
+import android.content.Intent
+import android.provider.Telephony
+
 
 class MainActivity : ComponentActivity() {
 
@@ -88,6 +91,16 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        val dao = AppDatabase.getDatabase(this).messageDao()
+
+        lifecycleScope.launch {
+            loadExistingSms(this@MainActivity, dao)
+        }
+
+        requestDefaultSmsApp(this)
+
+
 
         ActivityCompat.requestPermissions(
             this,
@@ -102,6 +115,8 @@ class MainActivity : ComponentActivity() {
 
         requestSmsRole()
         enableEdgeToEdge()
+
+
 
         setContent {
             ParsaMessengerTheme {
@@ -157,7 +172,8 @@ fun MessengerScreen() {
     }
 
     val dao = remember { AppDatabase.getDatabase(context).messageDao() }
-    val roomChats by dao.getChats().collectAsState(initial = emptyList())
+    val roomChats by dao.getConversations().collectAsState(initial = emptyList())
+
 
     val chats = roomChats
         .distinctBy { PhoneUtils.normalize(it.address) }
@@ -541,7 +557,7 @@ private fun CategoryChipsRow(
                     selectedLabelColor = Color.White,
                     containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.40f),
                     labelColor = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                ),
             )
         }
 
@@ -1056,5 +1072,21 @@ private fun isBankLikeMessage(
 
     return bankKeywords.any { keyword ->
         text.contains(keyword)
+    }
+}
+
+
+fun requestDefaultSmsApp(activity: Activity) {
+
+    if (Telephony.Sms.getDefaultSmsPackage(activity) != activity.packageName) {
+
+        val intent = Intent(Telephony.Sms.Intents.ACTION_CHANGE_DEFAULT)
+
+        intent.putExtra(
+            Telephony.Sms.Intents.EXTRA_PACKAGE_NAME,
+            activity.packageName
+        )
+
+        activity.startActivity(intent)
     }
 }

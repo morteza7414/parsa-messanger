@@ -6,13 +6,19 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 
 @Database(
-    entities = [MessageEntity::class],
-    version = 3,
+    entities = [
+        MessageEntity::class,
+        CategoryEntity::class,
+        ChatCategoryEntity::class
+    ],
+    version = 5,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun messageDao(): MessageDao
+
+    abstract fun categoryDao(): CategoryDao
 
     companion object {
 
