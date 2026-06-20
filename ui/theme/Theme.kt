@@ -5,60 +5,35 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
-private val DarkColors = darkColorScheme(
-
-    primary = Color(0xFF2962FF),
-
-    background = Color(0xFF070B12),
-
-    surface = Color(0xFF111827),
-
-    surfaceVariant = Color(0xFF161E2E)
-
+private val DarkColorScheme = darkColorScheme(
+    primary = BluePrimary,
+    background = BgDark,
+    surface = CardDark,
+    onBackground = Color.White,
+    onSurface = Color.White,
+    surfaceVariant = Color(0xFF2C2F33).copy(alpha = 0.6f),
+    onSurfaceVariant = Color.LightGray
 )
 
-private val LightColors = lightColorScheme(
-
-    primary = Color(0xFF2962FF),
-
-    background = Color(0xFFF7F8FC),
-
-    surface = Color.White,
-
-    surfaceVariant = Color(0xFFF2F4F8)
-
+private val LightColorScheme = lightColorScheme(
+    primary = BluePrimary,
+    background = BgLight,
+    surface = CardLight,
+    onBackground = Color.Black,
+    onSurface = Color.Black,
+    surfaceVariant = Color.White.copy(alpha = 0.5f),
+    onSurfaceVariant = Color.DarkGray
 )
 
 @Composable
 fun ParsaMessengerTheme(
-
-    darkTheme:
-
-    Boolean =
-
-        isSystemInDarkTheme(),
-
-    content:
-
-    @Composable
-        () -> Unit
-
+    darkTheme: Boolean = isSystemInDarkTheme(),
+    content: @Composable () -> Unit
 ) {
+    val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
 
     MaterialTheme(
-
-        colorScheme =
-
-            if (darkTheme)
-
-                DarkColors
-
-            else
-
-                LightColors,
-
+        colorScheme = colorScheme,
         content = content
-
     )
-
 }

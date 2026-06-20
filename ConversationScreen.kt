@@ -4,783 +4,254 @@ import android.telephony.SmsManager
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.example.parsamessenger.ui.theme.BluePrimary
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.math.roundToInt
 
-data class Message(
-    val id: Long,
-    val text: String,
-    val mine: Boolean,
-    val timestamp: Long
-)
-
+// استفاده مستقیم از MessageEntity برای جلوگیری از خطای Cast و Type
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConversationScreen(
     username: String,
     onBack: () -> Unit
 ) {
-
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val dao = remember { AppDatabase.getDatabase(context).messageDao() }
+    val key = PhoneUtils.normalize(username)
+    val displayName = ContactNameUtils.getName(context, username)
+    val avatar = remember { ContactsUtils.getContactPhoto(context, username) }
 
-    val db =
-        remember {
-            AppDatabase.getDatabase(context)
+    val dbMessages by dao.getMessages(key).collectAsState(initial = emptyList())
+
+    // مدیریت اسکرول
+    val listState = rememberLazyListState()
+    var input by remember { mutableStateOf("") }
+    var editingMessage by remember { mutableStateOf<MessageEntity?>(null) }
+    var isSending by remember { mutableStateOf(false) }
+
+    // اسکرول خودکار به آخرین پیام
+    LaunchedEffect(dbMessages.size) {
+        if (dbMessages.isNotEmpty()) {
+            listState.animateScrollToItem(dbMessages.size - 1)
         }
-
-    val dao =
-        remember {
-            db.messageDao()
-        }
-
-    val key =
-        PhoneUtils.normalize(username)
-
-    val displayName =
-        ContactNameUtils
-            .getName(
-                context,
-                username
-            )
-
-    val avatar = remember {
-
-        ContactsUtils
-            .getContactPhoto(
-                context,
-                username
-            )
-
     }
 
-    val dbMessages by
-    dao
-        .getMessages(key)
-        .collectAsState(
-            initial = emptyList()
-        )
-
-    val messages =
-        dbMessages.map {
-
-            Message(
-                it.id,
-                it.body,
-                it.isMine,
-                it.timestamp
-            )
-
-        }
-
-    var input by remember {
-
-        mutableStateOf("")
-
-    }
-
-    var editing by remember {
-
-        mutableStateOf<Message?>(null)
-
-    }
-
-    if (editing != null) {
-
-        var edit by remember {
-
-            mutableStateOf(
-                editing!!.text
-            )
-
-        }
-
+    /* -------------------- EDIT DIALOG -------------------- */
+    editingMessage?.let { msg ->
+        var editValue by remember { mutableStateOf(msg.body) }
         AlertDialog(
-
-            onDismissRequest = {
-
-                editing = null
-
-            },
-
-            title = {
-
-                Text("Edit Message")
-
-            },
-
+            onDismissRequest = { editingMessage = null },
+            title = { Text("Edit Message") },
             text = {
-
                 OutlinedTextField(
-
-                    value = edit,
-
-                    onValueChange = {
-
-                        edit = it
-
-                    }
-
+                    value = editValue,
+                    onValueChange = { editValue = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp)
                 )
-
             },
-
             confirmButton = {
-
-                TextButton(
-
-                    onClick = {
-
-                        scope.launch(
-                            Dispatchers.IO
-                        ) {
-
-                            dao.updateMessage(
-
-                                MessageEntity(
-
-                                    id =
-                                        editing!!.id,
-
-                                    address =
-                                        key,
-
-                                    body =
-                                        edit,
-
-                                    isMine =
-                                        editing!!.mine,
-
-                                    timestamp =
-                                        editing!!.timestamp
-
-                                )
-
-                            )
-
-                        }
-
-                        editing = null
-
+                TextButton(onClick = {
+                    scope.launch(Dispatchers.IO) {
+                        dao.updateMessage(msg.copy(body = editValue))
                     }
-
-                ) {
-
-                    Text("Save")
-
-                }
-
+                    editingMessage = null
+                }) { Text("Save") }
             }
-
         )
-
     }
 
-    Column(
-
-        Modifier
-            .fillMaxSize()
-            .imePadding()
-
-    ) {
-
-        TopAppBar(
-
-            navigationIcon = {
-
-                IconButton(
-                    onClick =
-                        onBack
-                ) {
-
-                    Icon(
-                        Icons.Default.ArrowBack,
-                        null
-                    )
-
-                }
-
-            },
-
-            title = {
-
-                Row(
-
-                    verticalAlignment =
-                        Alignment.CenterVertically
-
-                ) {
-
-                    if (
-                        avatar != null
-                    ) {
-
-                        AsyncImage(
-
-                            model =
-                                avatar,
-
-                            contentDescription =
-                                null,
-
-                            modifier =
-
-                                Modifier
-                                    .size(
-                                        46.dp
-                                    )
-                                    .clip(
-                                        CircleShape
-                                    )
-
-                        )
-
-                    }
-
-                    Spacer(
-                        Modifier.width(
-                            12.dp
-                        )
-                    )
-
-                    Column {
-
-                        Text(
-                            displayName
-                        )
-
-                        Text(
-
-                            "Online",
-
-                            color =
-                                Color.Gray,
-
-                            style =
-                                MaterialTheme
-                                    .typography
-                                    .bodySmall
-
-                        )
-
-                    }
-
-                }
-
-            },
-
-            actions = {
-
-                IconButton(
-                    {}
-                ) {
-
-                    Icon(
-                        Icons.Default.Call,
-                        null
-                    )
-
-                }
-
-                IconButton(
-                    {}
-                ) {
-
-                    Icon(
-                        Icons.Default.AccountBox,
-                        contentDescription = null
-                    )
-
-                }
-
-                IconButton(
-                    {}
-                ) {
-
-                    Icon(
-                        Icons.Default.MoreVert,
-                        null
-                    )
-
-                }
-
-            }
-
-        )
-
-        HorizontalDivider()
-
-        LazyColumn(
-
-            modifier =
-                Modifier
-                    .weight(1f),
-
-            contentPadding =
-                PaddingValues(
-                    14.dp
-                )
-
-        ) {
-
-            items(
-                messages,
-                key = {
-                    it.id
-                }
-            ) {
-
-                MessageBubble(
-
-                    message = it,
-
-                    onDelete = {
-
-                        scope.launch(
-                            Dispatchers.IO
-                        ) {
-
-                            dao.deleteMessage(
-
-                                dbMessages.first {
-
-                                        m ->
-
-                                    m.id ==
-                                            it.id
-
-                                }
-
-                            )
-
-                        }
-
-                    },
-
-                    onEdit = {
-
-                        editing =
-                            it
-
-                    }
-
-                )
-
-            }
-
-        }
-
-        Surface(
-
-            tonalElevation =
-                4.dp
-
-        ) {
-
-            Row(
-
-                modifier =
-
-                    Modifier
-                        .padding(
-                            10.dp
-                        ),
-
-                verticalAlignment =
-                    Alignment.CenterVertically
-
-            ) {
-
-                OutlinedTextField(
-
-                    value =
-                        input,
-
-                    onValueChange = {
-
-                        input = it
-
-                    },
-
-                    modifier =
-                        Modifier
-                            .weight(1f),
-
-                    placeholder = {
-
-                        Text(
-                            "iMessage"
-                        )
-
-                    },
-
-                    shape =
-
-                        RoundedCornerShape(
-                            30.dp
-                        )
-
-                )
-
-                Spacer(
-                    Modifier.width(
-                        8.dp
-                    )
-                )
-
-                FloatingActionButton(
-
-                    onClick = {
-
-                        if (
-                            input
-                                .isBlank()
-                        )
-                            return@FloatingActionButton
-
-                        val text =
-                            input
-
-                        input = ""
-
-                        try {
-
-                            context
-                                .getSystemService(
-                                    SmsManager::class.java
-                                )
-
-                                .sendTextMessage(
-
-                                    key,
-
-                                    null,
-
-                                    text,
-
-                                    null,
-
-                                    null
-
-                                )
-
-                            scope.launch(
-                                Dispatchers.IO
-                            ) {
-
-                                dao.insert(
-
-                                    MessageEntity(
-
-                                        address =
-                                            key,
-
-                                        body =
-                                            text,
-
-                                        isMine =
-                                            true,
-
-                                        timestamp =
-                                            System.currentTimeMillis()
-
-                                    )
-
-                                )
-
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, null) } },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (avatar != null) {
+                            AsyncImage(model = avatar, contentDescription = null, modifier = Modifier.size(42.dp).clip(CircleShape))
+                        } else {
+                            Box(Modifier.size(42.dp).clip(CircleShape).background(BluePrimary.copy(0.1f)), contentAlignment = Alignment.Center) {
+                                Text(displayName.take(1), color = BluePrimary, fontWeight = FontWeight.Bold)
                             }
-
                         }
-
-                        catch (
-                            _: Exception
-                        ) {
+                        Spacer(Modifier.width(12.dp))
+                        Column {
+                            Text(displayName, style = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Bold))
+                            Text("Online", style = TextStyle(fontSize = 12.sp, color = Color(0xFF4CAF50)))
                         }
+                    }
+                },
+                actions = {
+                    IconButton({}) { Icon(Icons.Default.Call, null) }
+                    IconButton({}) { Icon(Icons.Default.Videocam, null) }
+                    IconButton({}) { Icon(Icons.Default.MoreVert, null) }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background.copy(alpha = 0.8f))
+            )
+        },
+        containerColor = MaterialTheme.colorScheme.background
+    ) { padding ->
+        Column(Modifier.padding(padding).fillMaxSize().imePadding()) {
 
-                    },
-
-                    containerColor =
-                        Color(
-                            0xFF007AFF
-                        )
-
-                ) {
-
-                    Icon(
-                        Icons.Default.Send,
-                        null
+            // لیست پیام‌ها
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                items(dbMessages, key = { it.id }) { msg ->
+                    MessageBubble(
+                        message = msg,
+                        onDelete = { scope.launch(Dispatchers.IO) { dao.deleteMessage(msg) } },
+                        onEdit = { editingMessage = msg }
                     )
-
                 }
-
             }
 
+            // فیلد ورودی (Liquid Glass Style)
+            Surface(
+                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                color = Color.Transparent
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(32.dp))
+                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                ) {
+                    IconButton(onClick = {}) { Icon(Icons.Default.Add, null, tint = Color.Gray) }
+
+                    TextField(
+                        value = input,
+                        onValueChange = { input = it },
+                        modifier = Modifier.weight(1f),
+                        placeholder = { Text("Type a message...", color = Color.Gray) },
+                        // فیکس کردن رنگ متن در دارک مد
+                        textStyle = TextStyle(color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp),
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent,
+                            focusedIndicatorColor = Color.Transparent,
+                            unfocusedIndicatorColor = Color.Transparent,
+                            cursorColor = BluePrimary
+                        )
+                    )
+
+                    IconButton(onClick = {}) { Icon(Icons.Default.Face, null, tint = Color.Gray) }
+
+                    FloatingActionButton(
+                        onClick = {
+                            if (input.isBlank() || isSending) return@FloatingActionButton
+                            val text = input.trim()
+                            input = ""
+                            isSending = true
+
+                            try {
+                                val smsManager = context.getSystemService(SmsManager::class.java)
+                                smsManager.sendTextMessage(key, null, text, null, null)
+                                scope.launch(Dispatchers.IO) {
+                                    dao.insert(MessageEntity(address = key, body = text, isMine = true, timestamp = System.currentTimeMillis()))
+                                }
+                            } catch (e: Exception) { e.printStackTrace() }
+                            isSending = false
+                        },
+                        modifier = Modifier.size(48.dp),
+                        containerColor = BluePrimary,
+                        shape = CircleShape,
+                        elevation = FloatingActionButtonDefaults.elevation(0.dp)
+                    ) {
+                        // نمایش آیکون میکروفون در صورت خالی بودن (مثل تصویر) یا فلش ارسال
+                        Icon(if (input.isEmpty()) Icons.Default.Mic else Icons.Default.Send, null, tint = Color.White)
+                    }
+                }
+            }
         }
-
     }
-
 }
 
-@OptIn(
-    ExperimentalFoundationApi::class
-)
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MessageBubble(
-
-    message: Message,
-
+    message: MessageEntity,
     onDelete: () -> Unit,
-
     onEdit: () -> Unit
-
 ) {
-
-    val offset =
-        remember {
-
-            Animatable(0f)
-
-        }
-
-    val scope =
-        rememberCoroutineScope()
-
-    val time =
-
-        remember {
-
-            SimpleDateFormat(
-
-                "HH:mm",
-
-                Locale.getDefault()
-
-            )
-
-        }
+    val offset = remember { Animatable(0f) }
+    val scope = rememberCoroutineScope()
+    val time = remember { SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(message.timestamp)) }
 
     Box(
-
-        modifier =
-
-            Modifier
-
-                .fillMaxWidth()
-
-                .offset {
-
-                    IntOffset(
-
-                        offset
-                            .value
-                            .roundToInt(),
-
-                        0
-
-                    )
-
-                }
-
-                .pointerInput(Unit) {
-
-                    detectHorizontalDragGestures(
-
-                        onHorizontalDrag = {
-
-                                _,
-                                dragAmount ->
-
-                            scope.launch {
-
-                                offset.snapTo(
-                                    offset.value +
-                                            dragAmount
-                                )
-
-                            }
-
-                        },
-
-                        onDragEnd = {
-
-                            if (
-
-                                offset.value <
-                                -220
-
-                            ) {
-
-                                onDelete()
-
-                            }
-
-                            else {
-
-                                scope.launch {
-
-                                    offset.animateTo(
-
-                                        0f,
-
-                                        tween(200)
-
-                                    )
-
-                                }
-
-                            }
-
-                        }
-
-                    )
-
-                },
-
-        contentAlignment =
-
-            if (
-                message.mine
-            )
-
-                Alignment.CenterEnd
-
-            else
-
-                Alignment.CenterStart
-
+        modifier = Modifier
+            .fillMaxWidth()
+            .offset { IntOffset(offset.value.roundToInt(), 0) }
+            .pointerInput(Unit) {
+                detectHorizontalDragGestures(
+                    onHorizontalDrag = { _, dragAmount ->
+                        scope.launch { offset.snapTo(offset.value + dragAmount) }
+                    },
+                    onDragEnd = {
+                        if (offset.value < -250f) onDelete()
+                        else scope.launch { offset.animateTo(0f, tween(200)) }
+                    }
+                )
+            },
+        contentAlignment = if (message.isMine) Alignment.CenterEnd else Alignment.CenterStart
     ) {
+        val gradient = Brush.horizontalGradient(listOf(BluePrimary, Color(0xFF00C6FF)))
 
-        Card(
-
-            modifier =
-
-                Modifier
-                    .combinedClickable(
-
-                        onClick = {},
-
-                        onLongClick = {
-
-                            onEdit()
-
-                        }
-
-                    ),
-
-            colors =
-
-                CardDefaults
-                    .cardColors(
-
-                        if (
-                            message.mine
-                        )
-
-                            Color(
-                                0xFF2962FF
-                            )
-
-                        else
-
-                            MaterialTheme
-                                .colorScheme
-                                .surfaceVariant
-
-                    ),
-
-            shape =
-
-                RoundedCornerShape(
-                    26.dp
-                )
-
-        ) {
-
-            Column(
-
-                Modifier.padding(
-                    14.dp
-                )
-
+        Column(horizontalAlignment = if (message.isMine) Alignment.End else Alignment.Start) {
+            Surface(
+                modifier = Modifier.combinedClickable(onClick = {}, onLongClick = onEdit),
+                shape = RoundedCornerShape(
+                    topStart = 22.dp, topEnd = 22.dp,
+                    bottomStart = if (message.isMine) 22.dp else 4.dp,
+                    bottomEnd = if (message.isMine) 4.dp else 22.dp
+                ),
+                color = if (message.isMine) Color.Transparent else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f)
             ) {
-
-                Text(
-
-                    message.text,
-
-                    color =
-
-                        if (
-                            message.mine
-                        )
-
-                            Color.White
-
-                        else
-
-                            MaterialTheme
-                                .colorScheme
-                                .onSurface
-
-                )
-
-                Spacer(
-                    Modifier.height(
-                        6.dp
-                    )
-                )
-
-                Text(
-
-                    text =
-
-                        time.format(
-
-                            Date(
-                                message.timestamp
-                            )
-
-                        ) + if (
-                            message.mine
-                        )
-
-                            " ✓✓"
-
-                        else "",
-
-                    color =
-                        Color.Gray
-
-                )
-
+                Box(modifier = if (message.isMine) Modifier.background(gradient).padding(14.dp) else Modifier.padding(14.dp)) {
+                    Text(message.body, color = if (message.isMine) Color.White else MaterialTheme.colorScheme.onSurface)
+                }
             }
-
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+                Text(time, fontSize = 10.sp, color = Color.Gray)
+                if (message.isMine) {
+                    Spacer(Modifier.width(4.dp))
+                    // تیک دوتایی مشابه عکس
+                    Icon(Icons.Default.DoneAll, null, modifier = Modifier.size(14.dp), tint = BluePrimary)
+                }
+            }
         }
-
     }
-
 }
