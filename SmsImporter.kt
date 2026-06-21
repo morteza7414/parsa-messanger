@@ -2,52 +2,69 @@ package com.example.parsamessenger
 
 import android.content.Context
 import android.net.Uri
+import android.provider.Telephony
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-suspend fun loadExistingSms(context: Context, dao: MessageDao) {
+object SmsImporter {
 
-    val prefs = context.getSharedPreferences("sms_import", Context.MODE_PRIVATE)
+    suspend fun importAll(context: Context) {
 
-    if (prefs.getBoolean("imported", false)) return
+        withContext(Dispatchers.IO) {
 
-    withContext(Dispatchers.IO) {
+            val dao = AppDatabase.getDatabase(context).messageDao()
 
-        val cursor = context.contentResolver.query(
-            Uri.parse("content://sms/"),
-            null,
-            null,
-            null,
-            "date ASC"
-        )
+            val uri = Uri.parse("content://sms")
 
-        cursor?.use {
+            val projection = arrayOf(
+                Telephony.Sms.ADDRESS,
+                Telephony.Sms.BODY,
+                Telephony.Sms.DATE,
+                Telephony.Sms.TYPE,
+                Telephony.Sms.READ
+            )
 
-            val bodyIndex = it.getColumnIndex("body")
-            val addressIndex = it.getColumnIndex("address")
-            val dateIndex = it.getColumnIndex("date")
-            val typeIndex = it.getColumnIndex("type")
+            val cursor = context.contentResolver.query(
+                uri,
+                projection,
+                null,
+                null,
+                "date ASC"
+            ) ?: return@withContext
 
-            while (it.moveToNext()) {
+            val messages = mutableListOf<MessageEntity>()
 
-                val body = it.getString(bodyIndex)
-                val address = it.getString(addressIndex)
-                val date = it.getLong(dateIndex)
-                val type = it.getInt(typeIndex)
+            val addressIndex = cursor.getColumnIndex(Telephony.Sms.ADDRESS)
+            val bodyIndex = cursor.getColumnIndex(Telephony.Sms.BODY)
+            val dateIndex = cursor.getColumnIndex(Telephony.Sms.DATE)
+            val typeIndex = cursor.getColumnIndex(Telephony.Sms.TYPE)
+            val readIndex = cursor.getColumnIndex(Telephony.Sms.READ)
 
-                val isMine = type == 2
+            while (cursor.moveToNext()) {
 
-                dao.insert(
+                val address = cursor.getString(addressIndex) ?: continue
+                val body = cursor.getString(bodyIndex) ?: ""
+                val date = cursor.getLong(dateIndex)
+                val type = cursor.getInt(typeIndex)
+                val read = cursor.getInt(readIndex) == 1
+
+                messages.add(
                     MessageEntity(
                         address = PhoneUtils.normalize(address),
                         body = body,
                         timestamp = date,
-                        isMine = isMine
+                        isMine = type == Telephony.Sms.MESSAGE_TYPE_SENT,
+                        sent = true,
+                        delivered = true,
+                        isRead = read,
+                        failed = false
                     )
                 )
             }
-        }
 
-        prefs.edit().putBoolean("imported", true).apply()
+            cursor.close()
+
+            dao.insertAll(messages)
+        }
     }
 }

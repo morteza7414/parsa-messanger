@@ -1,42 +1,48 @@
 package com.example.parsamessenger
 
+import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class SmsSentReceiver : BroadcastReceiver() {
 
-    override fun onReceive(
+    override fun onReceive(context: Context, intent: Intent) {
 
-        context: Context,
+        val messageId = intent.getLongExtra("messageId", -1)
 
-        intent: Intent
+        if (messageId == -1L) return
 
-    ) {
+        val dao = AppDatabase.getDatabase(context).messageDao()
 
-        val messageId =
+        CoroutineScope(Dispatchers.IO).launch {
 
-            intent.getLongExtra(
+            val currentMessages = dao.getMessagesById(messageId)
+            val message = currentMessages ?: return@launch
 
-                "messageId",
+            when (resultCode) {
 
-                -1
+                Activity.RESULT_OK -> {
+                    dao.updateMessage(
+                        message.copy(
+                            sent = true,
+                            failed = false
+                        )
+                    )
+                }
 
-            )
-
-        if (
-
-            resultCode ==
-
-            android.app.Activity.RESULT_OK
-
-        ) {
-
-            // مرحله بعد
-            // sent = true
-
+                else -> {
+                    dao.updateMessage(
+                        message.copy(
+                            failed = true,
+                            sent = false
+                        )
+                    )
+                }
+            }
         }
-
     }
-
 }

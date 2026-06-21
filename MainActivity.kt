@@ -2,24 +2,40 @@ package com.example.parsamessenger
 
 import android.Manifest
 import android.app.role.RoleManager
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.provider.Telephony
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.border
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -38,8 +54,6 @@ import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -72,65 +86,80 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import coil.compose.AsyncImage
 import com.example.parsamessenger.ui.theme.BluePrimary
 import com.example.parsamessenger.ui.theme.ParsaMessengerTheme
 import kotlinx.coroutines.launch
 import androidx.lifecycle.lifecycleScope
-import android.app.Activity
-import android.content.Intent
-import android.provider.Telephony
-import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.layout.Box
-
-
 
 class MainActivity : ComponentActivity() {
 
-    private val permissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    private var hasStartedSetup = false
+
+    private val permissionsLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { result ->
+        val readSmsGranted = result[Manifest.permission.READ_SMS] == true
+        if (readSmsGranted) {
+            lifecycleScope.launch {
+                ImportManager.runIfNeeded(this@MainActivity)
+            }
+        }
+
+        requestDefaultSmsRoleIfNeeded()
+    }
+
+    private val defaultSmsRoleLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        // No-op. We only need to return to the app cleanly.
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val dao = AppDatabase.getDatabase(this).messageDao()
-
-        lifecycleScope.launch {
-            loadExistingSms(this@MainActivity, dao)
-        }
-
-        requestDefaultSmsRole()
-
-
-
-
-        ActivityCompat.requestPermissions(
-            this,
-            arrayOf(
-                Manifest.permission.READ_CONTACTS,
-                Manifest.permission.RECEIVE_SMS,
-                Manifest.permission.READ_SMS,
-                Manifest.permission.SEND_SMS
-            ),
-            100
-        )
-
         enableEdgeToEdge()
-
-
 
         setContent {
             ParsaMessengerTheme {
                 MessengerScreen()
             }
         }
+
+        if (!hasStartedSetup) {
+            hasStartedSetup = true
+            startInitialSetup()
+        }
     }
 
-    private fun requestDefaultSmsRole() {
+    private fun startInitialSetup() {
+        val permissionsToRequest = buildList {
+            if (!hasPermission(Manifest.permission.READ_CONTACTS)) {
+                add(Manifest.permission.READ_CONTACTS)
+            }
+            if (!hasPermission(Manifest.permission.RECEIVE_SMS)) {
+                add(Manifest.permission.RECEIVE_SMS)
+            }
+            if (!hasPermission(Manifest.permission.READ_SMS)) {
+                add(Manifest.permission.READ_SMS)
+            }
+            if (!hasPermission(Manifest.permission.SEND_SMS)) {
+                add(Manifest.permission.SEND_SMS)
+            }
+        }
+
+        if (permissionsToRequest.isNotEmpty()) {
+            permissionsLauncher.launch(permissionsToRequest.toTypedArray())
+        } else {
+            lifecycleScope.launch {
+                ImportManager.runIfNeeded(this@MainActivity)
+            }
+            requestDefaultSmsRoleIfNeeded()
+        }
+    }
+
+    private fun requestDefaultSmsRoleIfNeeded() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val roleManager = getSystemService(RoleManager::class.java)
 
@@ -140,21 +169,24 @@ class MainActivity : ComponentActivity() {
                 !roleManager.isRoleHeld(RoleManager.ROLE_SMS)
             ) {
                 val intent = roleManager.createRequestRoleIntent(RoleManager.ROLE_SMS)
-                startActivity(intent)
+                defaultSmsRoleLauncher.launch(intent)
             }
-
         } else {
             if (Telephony.Sms.getDefaultSmsPackage(this) != packageName) {
-                val intent = Intent(Telephony.Sms.Intents.ACTION_CHANGE_DEFAULT)
-                intent.putExtra(
-                    Telephony.Sms.Intents.EXTRA_PACKAGE_NAME,
-                    packageName
-                )
-                startActivity(intent)
+                val intent = Intent(Telephony.Sms.Intents.ACTION_CHANGE_DEFAULT).apply {
+                    putExtra(Telephony.Sms.Intents.EXTRA_PACKAGE_NAME, packageName)
+                }
+                defaultSmsRoleLauncher.launch(intent)
             }
         }
     }
 
+    private fun hasPermission(permission: String): Boolean {
+        return ContextCompat.checkSelfPermission(
+            this,
+            permission
+        ) == PackageManager.PERMISSION_GRANTED
+    }
 }
 
 data class Chat(
@@ -165,7 +197,6 @@ data class Chat(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MessengerScreen() {
-
     val context = LocalContext.current
     var categoryToDelete by remember { mutableStateOf<String?>(null) }
     var selectedChat by remember { mutableStateOf<Chat?>(null) }
@@ -181,9 +212,9 @@ fun MessengerScreen() {
         mutableStateListOf(
             "All",
             "Personal",
-//            "Bank"
         )
     }
+
     val dao = remember { AppDatabase.getDatabase(context).messageDao() }
     val roomChats by dao.getConversations().collectAsState(initial = emptyList())
 
@@ -191,45 +222,36 @@ fun MessengerScreen() {
         selectedChat = null
     }
 
-
     val chats = roomChats
         .distinctBy { PhoneUtils.normalize(it.address) }
         .map { Chat(it.address, it.body) }
 
-    val filteredChats = chats
-        .filter { chat ->
-            val displayName = ContactNameUtils.getName(context, chat.name)
+    val filteredChats = chats.filter { chat ->
+        val displayName = ContactNameUtils.getName(context, chat.name)
 
-            val matchesSearch =
-                if (showSearch && search.isNotBlank()) {
-                    displayName.contains(search, ignoreCase = true) ||
-                            chat.name.contains(search, ignoreCase = true) ||
-                            chat.message.contains(search, ignoreCase = true)
-                } else {
-                    true
+        val matchesSearch =
+            if (showSearch && search.isNotBlank()) {
+                displayName.contains(search, ignoreCase = true) ||
+                        chat.name.contains(search, ignoreCase = true) ||
+                        chat.message.contains(search, ignoreCase = true)
+            } else {
+                true
+            }
+
+        val matchesCategory =
+            when (selectedCategory) {
+                "All" -> true
+                "Personal" -> !isBankLikeMessage(chat.name, chat.message)
+                "Bank" -> isBankLikeMessage(chat.name, chat.message)
+                else -> {
+                    displayName.contains(selectedCategory, ignoreCase = true) ||
+                            chat.name.contains(selectedCategory, ignoreCase = true) ||
+                            chat.message.contains(selectedCategory, ignoreCase = true)
                 }
+            }
 
-            val matchesCategory =
-                when (selectedCategory) {
-                    "All" -> true
-
-                    "Personal" -> {
-                        !isBankLikeMessage(chat.name, chat.message)
-                    }
-
-                    "Bank" -> {
-                        isBankLikeMessage(chat.name, chat.message)
-                    }
-
-                    else -> {
-                        displayName.contains(selectedCategory, ignoreCase = true) ||
-                                chat.name.contains(selectedCategory, ignoreCase = true) ||
-                                chat.message.contains(selectedCategory, ignoreCase = true)
-                    }
-                }
-
-            matchesSearch && matchesCategory
-        }
+        matchesSearch && matchesCategory
+    }
 
     if (selectedChat != null) {
         ConversationScreen(
@@ -238,9 +260,6 @@ fun MessengerScreen() {
         )
         return
     }
-
-
-
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -292,7 +311,6 @@ fun MessengerScreen() {
             }
         }
     ) { padding ->
-
         when (selectedBottomItem) {
             0 -> {
                 MessagesHomeContent(
@@ -311,16 +329,13 @@ fun MessengerScreen() {
                     },
                     onCategorySelected = { selectedCategory = it },
                     onAddCategoryClick = { showAddCategoryDialog = true },
-                    onChatClick = { chat ->
-                        selectedChat = chat
-                    },
-                    onCategoryLongClick = { category ->      // ✅ این اضافه شود
+                    onChatClick = { chat -> selectedChat = chat },
+                    onCategoryLongClick = { category ->
                         if (category != "All" && category != "Personal" && category != "Bank") {
                             categoryToDelete = category
                         }
                     }
                 )
-
             }
 
             1 -> {
@@ -386,8 +401,6 @@ fun MessengerScreen() {
             }
         )
     }
-
-
 }
 
 @Composable
@@ -406,8 +419,7 @@ private fun MessagesHomeContent(
     onCategoryLongClick: (String) -> Unit,
 ) {
     Column(
-        modifier = modifier
-            .padding(horizontal = 20.dp)
+        modifier = modifier.padding(horizontal = 20.dp)
     ) {
         Spacer(modifier = Modifier.height(16.dp))
 
@@ -439,8 +451,6 @@ private fun MessagesHomeContent(
             onAddCategoryClick = onAddCategoryClick,
             onCategoryLongClick = onCategoryLongClick
         )
-
-
 
         Spacer(modifier = Modifier.height(12.dp))
 
@@ -488,9 +498,7 @@ private fun MessagesHeader(
             color = MaterialTheme.colorScheme.onSurface
         )
 
-        Row(
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(
                 onClick = onToggleSearch,
                 modifier = Modifier
@@ -602,7 +610,6 @@ private fun CategoryChipsRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         categories.forEach { title ->
-
             val isSelected = selectedCategory == title
 
             Box(
@@ -617,23 +624,15 @@ private fun CategoryChipsRow(
                         }
                     )
                     .combinedClickable(
-                        onClick = {
-                            onCategorySelected(title)
-                        },
-                        onLongClick = {
-                            onCategoryLongClick(title)
-                        }
+                        onClick = { onCategorySelected(title) },
+                        onLongClick = { onCategoryLongClick(title) }
                     )
                     .padding(horizontal = 14.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = title,
-                    color = if (isSelected) {
-                        Color.White
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
+                    color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 14.sp,
                     fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
                 )
@@ -667,8 +666,6 @@ private fun CategoryChipsRow(
         }
     }
 }
-
-
 
 @Composable
 fun ChatItem(
@@ -800,8 +797,7 @@ private fun ContactsPage(
     val contacts = remember { ContactsUtils.getContacts(context) }
 
     Column(
-        modifier = modifier
-            .padding(horizontal = 20.dp)
+        modifier = modifier.padding(horizontal = 20.dp)
     ) {
         Spacer(modifier = Modifier.height(16.dp))
 
@@ -954,16 +950,12 @@ private fun AddCategoryDialog(
             )
         },
         confirmButton = {
-            TextButton(
-                onClick = { onAdd(title) }
-            ) {
+            TextButton(onClick = { onAdd(title) }) {
                 Text("Add")
             }
         },
         dismissButton = {
-            TextButton(
-                onClick = onDismiss
-            ) {
+            TextButton(onClick = onDismiss) {
                 Text("Cancel")
             }
         }
@@ -1098,13 +1090,13 @@ fun NewChatSheet(
                             .clickable { onContactSelected(contact.number) },
                         colors = ListItemDefaults.colors(
                             containerColor = Color.Transparent
-                        )
-                    )
+                        ))
                 }
             }
         }
     }
 }
+
 
 private fun isBankLikeMessage(
     sender: String,
@@ -1155,5 +1147,3 @@ private fun isBankLikeMessage(
         text.contains(keyword)
     }
 }
-
-

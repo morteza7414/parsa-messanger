@@ -10,7 +10,10 @@ interface MessageDao {
     fun getMessages(address: String): Flow<List<MessageEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insert(message: MessageEntity)
+    suspend fun insert(message: MessageEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertAll(messages: List<MessageEntity>)
 
     @Delete
     suspend fun deleteMessage(message: MessageEntity)
@@ -24,7 +27,11 @@ interface MessageDao {
     """)
     fun getUnreadCount(address: String): Flow<Int>
 
-    @Query("UPDATE messages SET isRead = 1 WHERE address = :address")
+    @Query("""
+        UPDATE messages
+        SET isRead = 1
+        WHERE address = :address AND isMine = 0
+    """)
     suspend fun markAsRead(address: String)
 
     @Query("""
@@ -35,4 +42,7 @@ interface MessageDao {
         ORDER BY timestamp DESC
     """)
     fun getConversations(): Flow<List<MessageEntity>>
+
+    @Query("SELECT * FROM messages WHERE id = :id LIMIT 1")
+    suspend fun getMessagesById(id: Long): MessageEntity?
 }

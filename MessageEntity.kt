@@ -1,14 +1,14 @@
 package com.example.parsamessenger
 
+
 import androidx.room.Entity
-import androidx.room.PrimaryKey
 import androidx.room.Index
+import androidx.room.PrimaryKey
 
 @Entity(
     tableName = "messages",
     indices = [
-        Index(value = ["address"]),
-        Index(value = ["timestamp"])
+        Index(value = ["address", "timestamp", "body"], unique = true)
     ]
 )
 data class MessageEntity(
@@ -17,12 +17,18 @@ data class MessageEntity(
     val id: Long = 0,
 
     val address: String,
+
     val body: String,
-    val isMine: Boolean,
+
     val timestamp: Long,
-    val sent:Boolean = false,
-    val delivered:Boolean = false,
-    val isRead: Boolean = false
 
+    val isMine: Boolean,
+
+    val sent: Boolean,
+
+    val delivered: Boolean,
+
+    val isRead: Boolean,
+
+    val failed: Boolean
 )
-
