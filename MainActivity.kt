@@ -2,6 +2,7 @@ package com.example.parsamessenger
 
 import android.Manifest
 import android.app.role.RoleManager
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
@@ -13,15 +14,25 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -32,10 +43,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.border
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -45,9 +56,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Sms
@@ -75,23 +88,35 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import coil.compose.AsyncImage
 import com.example.parsamessenger.ui.theme.BluePrimary
 import com.example.parsamessenger.ui.theme.ParsaMessengerTheme
 import kotlinx.coroutines.launch
-import androidx.lifecycle.lifecycleScope
+import kotlin.math.roundToInt
+import androidx.compose.runtime.getValue
+
 
 class MainActivity : ComponentActivity() {
 
@@ -113,7 +138,6 @@ class MainActivity : ComponentActivity() {
     private val defaultSmsRoleLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
-        // No-op. We only need to return to the app cleanly.
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -191,22 +215,31 @@ class MainActivity : ComponentActivity() {
 
 data class Chat(
     val name: String,
-    val message: String
+    val message: String,
+    val isUnread: Boolean = false
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MessengerScreen() {
+    var chatToDelete by remember { mutableStateOf<Chat?>(null) }
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
     var categoryToDelete by remember { mutableStateOf<String?>(null) }
     var selectedChat by remember { mutableStateOf<Chat?>(null) }
     var search by remember { mutableStateOf("") }
     var showSearch by remember { mutableStateOf(false) }
     var showNewChatSheet by remember { mutableStateOf(false) }
     var selectedBottomItem by remember { mutableStateOf(0) }
-
     var selectedCategory by remember { mutableStateOf("All") }
     var showAddCategoryDialog by remember { mutableStateOf(false) }
+
+    val mutedChats = remember {
+        mutableStateListOf<String>().apply {
+            addAll(loadMutedChats(context))
+        }
+    }
 
     val categories = remember {
         mutableStateListOf(
@@ -224,7 +257,13 @@ fun MessengerScreen() {
 
     val chats = roomChats
         .distinctBy { PhoneUtils.normalize(it.address) }
-        .map { Chat(it.address, it.body) }
+        .map {
+            Chat(
+                name = it.address,
+                message = it.body,
+                isUnread = it.hasUnread
+            )
+        }
 
     val filteredChats = chats.filter { chat ->
         val displayName = ContactNameUtils.getName(context, chat.name)
@@ -318,6 +357,7 @@ fun MessengerScreen() {
                         .fillMaxSize()
                         .padding(padding),
                     chats = filteredChats,
+                    mutedChats = mutedChats,
                     search = search,
                     showSearch = showSearch,
                     selectedCategory = selectedCategory,
@@ -330,6 +370,20 @@ fun MessengerScreen() {
                     onCategorySelected = { selectedCategory = it },
                     onAddCategoryClick = { showAddCategoryDialog = true },
                     onChatClick = { chat -> selectedChat = chat },
+                    onChatDeleteRequest = { chat ->
+                        chatToDelete = chat
+                    },
+                    onChatMuteRequest = { chat ->
+                        val normalized = PhoneUtils.normalize(chat.name)
+
+                        if (mutedChats.contains(normalized)) {
+                            mutedChats.remove(normalized)
+                        } else {
+                            mutedChats.add(normalized)
+                        }
+
+                        saveMutedChats(context, mutedChats.toSet())
+                    },
                     onCategoryLongClick = { category ->
                         if (category != "All" && category != "Personal" && category != "Bank") {
                             categoryToDelete = category
@@ -378,6 +432,40 @@ fun MessengerScreen() {
         )
     }
 
+    if (chatToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { chatToDelete = null },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val chat = chatToDelete
+
+                        if (chat != null) {
+                            scope.launch {
+                                dao.deleteConversation(chat.name)
+                            }
+                        }
+
+                        chatToDelete = null
+                    }
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        chatToDelete = null
+                    }
+                ) {
+                    Text("Cancel")
+                }
+            },
+            title = { Text("Delete conversation?") },
+            text = { Text("This chat will be permanently deleted.") }
+        )
+    }
+
     categoryToDelete?.let { category ->
         AlertDialog(
             onDismissRequest = { categoryToDelete = null },
@@ -407,6 +495,7 @@ fun MessengerScreen() {
 private fun MessagesHomeContent(
     modifier: Modifier = Modifier,
     chats: List<Chat>,
+    mutedChats: List<String>,
     search: String,
     showSearch: Boolean,
     selectedCategory: String,
@@ -416,7 +505,9 @@ private fun MessagesHomeContent(
     onCategorySelected: (String) -> Unit,
     onAddCategoryClick: () -> Unit,
     onChatClick: (Chat) -> Unit,
-    onCategoryLongClick: (String) -> Unit,
+    onChatDeleteRequest: (Chat) -> Unit,
+    onChatMuteRequest: (Chat) -> Unit,
+    onCategoryLongClick: (String) -> Unit
 ) {
     Column(
         modifier = modifier.padding(horizontal = 20.dp)
@@ -470,9 +561,13 @@ private fun MessagesHomeContent(
                     items = chats,
                     key = { chat -> PhoneUtils.normalize(chat.name) }
                 ) { chat ->
-                    ChatItem(chat = chat) {
-                        onChatClick(chat)
-                    }
+                    ChatItem(
+                        chat = chat,
+                        isMuted = mutedChats.contains(PhoneUtils.normalize(chat.name)),
+                        onClick = { onChatClick(chat) },
+                        onDeleteRequest = { onChatDeleteRequest(it) },
+                        onMuteRequest = { onChatMuteRequest(it) }
+                    )
                 }
             }
         }
@@ -670,121 +765,360 @@ private fun CategoryChipsRow(
 @Composable
 fun ChatItem(
     chat: Chat,
-    onClick: () -> Unit
+    isMuted: Boolean,
+    onClick: () -> Unit,
+    onDeleteRequest: (Chat) -> Unit,
+    onMuteRequest: (Chat) -> Unit
 ) {
     val context = LocalContext.current
+    val density = LocalDensity.current
+    val scope = rememberCoroutineScope()
+
     val name = ContactNameUtils.getName(context, chat.name)
     val photo = remember(chat.name) { ContactsUtils.getContactPhoto(context, chat.name) }
 
+    val offsetX = remember { Animatable(0f) }
+    var itemWidthPx by remember { mutableStateOf(0f) }
+
+    val actionWidthPx = with(density) { 150.dp.toPx() }
+    val revealThresholdPx = with(density) { 56.dp.toPx() }
+
+    val deleteThresholdPx =
+        if (itemWidthPx > 0f) {
+            itemWidthPx * 0.70f
+        } else {
+            with(density) { 180.dp.toPx() }
+        }
+
+    val swipeProgress = (-offsetX.value / actionWidthPx).coerceIn(0f, 1f)
+
     val glassBrush = Brush.linearGradient(
         colors = listOf(
-            MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
-            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f),
-            MaterialTheme.colorScheme.surface.copy(alpha = 0.70f)
+            MaterialTheme.colorScheme.surface.copy(alpha = if (chat.isUnread) 0.96f else 0.88f),
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (chat.isUnread) 0.54f else 0.42f),
+            MaterialTheme.colorScheme.surface.copy(alpha = if (chat.isUnread) 0.78f else 0.70f)
         )
     )
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(32.dp))
-            .background(glassBrush)
-            .border(
-                width = 1.dp,
-                brush = Brush.linearGradient(
-                    colors = listOf(
-                        Color.White.copy(alpha = 0.45f),
-                        MaterialTheme.colorScheme.outline.copy(alpha = 0.14f),
-                        Color.White.copy(alpha = 0.12f)
-                    )
-                ),
-                shape = RoundedCornerShape(32.dp)
-            )
-            .clickable { onClick() }
+            .onSizeChanged { size ->
+                itemWidthPx = size.width.toFloat()
+            }
     ) {
         Row(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(14.dp),
+                .matchParentSize()
+                .alpha(swipeProgress)
+                .padding(end = 4.dp),
+            horizontalArrangement = Arrangement.End,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            if (photo != null) {
-                AsyncImage(
-                    model = photo,
-                    contentDescription = null,
-                    modifier = Modifier
-                        .size(58.dp)
-                        .clip(CircleShape)
-                )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .size(58.dp)
-                        .clip(CircleShape)
-                        .background(
-                            Brush.linearGradient(
-                                colors = listOf(
-                                    BluePrimary.copy(alpha = 0.20f),
-                                    BluePrimary.copy(alpha = 0.08f)
-                                )
-                            )
-                        )
-                        .border(
-                            width = 1.dp,
-                            color = BluePrimary.copy(alpha = 0.18f),
-                            shape = CircleShape
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = name.take(1).uppercase(),
-                        color = BluePrimary,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 20.sp
+            SwipeActionButton(
+                title = if (isMuted) "Muted" else "Mute",
+                color = Color(0xFF8E8E93),
+                icon = Icons.Default.NotificationsOff,
+                onClick = {
+                    scope.launch {
+                        onMuteRequest(chat)
+                        offsetX.animateTo(0f, tween(220))
+                    }
+                }
+            )
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            SwipeActionButton(
+                title = "Delete",
+                color = Color(0xFFFF3B30),
+                icon = Icons.Default.Delete,
+                onClick = {
+                    scope.launch {
+                        offsetX.animateTo(0f, tween(160))
+                        onDeleteRequest(chat)
+                    }
+                }
+            )
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .offset {
+                    IntOffset(offsetX.value.roundToInt(), 0)
+                }
+                .pointerInput(chat.name) {
+                    detectHorizontalDragGestures(
+                        onHorizontalDrag = { _, dragAmount ->
+                            val nextOffset = (offsetX.value + dragAmount)
+                                .coerceIn(-itemWidthPx, 0f)
+
+                            scope.launch {
+                                offsetX.snapTo(nextOffset)
+                            }
+                        },
+                        onDragEnd = {
+                            scope.launch {
+                                val currentOffset = -offsetX.value
+
+                                when {
+                                    currentOffset >= deleteThresholdPx -> {
+                                        offsetX.animateTo(0f, tween(180))
+                                        onDeleteRequest(chat)
+                                    }
+
+                                    currentOffset >= revealThresholdPx -> {
+                                        offsetX.animateTo(-actionWidthPx, tween(240))
+                                    }
+
+                                    else -> {
+                                        offsetX.animateTo(0f, tween(220))
+                                    }
+                                }
+                            }
+                        },
+                        onDragCancel = {
+                            scope.launch {
+                                offsetX.animateTo(0f, tween(220))
+                            }
+                        }
                     )
                 }
-            }
-
-            Spacer(modifier = Modifier.width(16.dp))
-
-            Column(
-                modifier = Modifier.weight(1f)
+                .clip(RoundedCornerShape(32.dp))
+                .background(glassBrush)
+                .border(
+                    width = if (chat.isUnread) 1.4.dp else 1.dp,
+                    brush = Brush.linearGradient(
+                        colors = listOf(
+                            Color.White.copy(alpha = if (chat.isUnread) 0.62f else 0.45f),
+                            MaterialTheme.colorScheme.outline.copy(alpha = if (chat.isUnread) 0.22f else 0.14f),
+                            Color.White.copy(alpha = if (chat.isUnread) 0.22f else 0.12f)
+                        )
+                    ),
+                    shape = RoundedCornerShape(32.dp)
+                )
+                .clickable { onClick() }
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                if (photo != null) {
+                    AsyncImage(
+                        model = photo,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .size(58.dp)
+                            .clip(CircleShape)
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(58.dp)
+                            .clip(CircleShape)
+                            .background(
+                                Brush.linearGradient(
+                                    colors = listOf(
+                                        BluePrimary.copy(alpha = if (chat.isUnread) 0.30f else 0.20f),
+                                        BluePrimary.copy(alpha = if (chat.isUnread) 0.14f else 0.08f)
+                                    )
+                                )
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = name.take(1).uppercase(),
+                            color = BluePrimary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 20.sp
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(16.dp))
+
+                Column(
+                    modifier = Modifier.weight(1f)
                 ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = name,
+                            fontWeight = if (chat.isUnread) FontWeight.ExtraBold else FontWeight.Bold,
+                            fontSize = 17.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        if (isMuted) {
+                            Spacer(modifier = Modifier.width(8.dp))
+
+                            Icon(
+                                imageVector = Icons.Default.NotificationsOff,
+                                contentDescription = "Muted",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.62f),
+                                modifier = Modifier.size(17.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(5.dp))
+
                     Text(
-                        text = name,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 17.sp,
-                        color = MaterialTheme.colorScheme.onSurface,
+                        text = chat.message,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-
-                    Spacer(modifier = Modifier.width(8.dp))
-
-                    Text(
-                        text = "12:30 PM",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
-                        fontSize = 12.sp
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = if (chat.isUnread) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (chat.isUnread) {
+                            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.96f)
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.88f)
+                        }
                     )
                 }
+            }
 
-                Spacer(modifier = Modifier.height(5.dp))
-
-                Text(
-                    text = chat.message,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.88f)
-                )
+            if (chat.isUnread) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(start = 48.dp, bottom = 10.dp)
+                ) {
+                    AnimatedUnreadOrb()
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun SwipeActionButton(
+    title: String,
+    color: Color,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .width(68.dp)
+            .height(76.dp)
+            .clip(RoundedCornerShape(24.dp))
+            .background(color.copy(alpha = 0.92f))
+            .clickable { onClick() },
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = title,
+            tint = Color.White,
+            modifier = Modifier.size(23.dp)
+        )
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        Text(
+            text = title,
+            color = Color.White,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1
+        )
+    }
+}
+
+@Composable
+private fun AnimatedUnreadOrb() {
+    val infiniteTransition = rememberInfiniteTransition(label = "UnreadOrbTransition")
+
+    val rotation by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(
+                durationMillis = 2600,
+                easing = LinearEasing
+            ),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "UnreadOrbRotation"
+    )
+
+    val pulse by infiniteTransition.animateFloat(
+        initialValue = 0.78f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(
+                durationMillis = 900,
+                easing = LinearEasing
+            ),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "UnreadOrbPulse"
+    )
+
+    Canvas(
+        modifier = Modifier
+            .size((13 * pulse).dp)
+            .shadow(
+                elevation = 10.dp,
+                shape = CircleShape,
+                ambientColor = BluePrimary.copy(alpha = 0.35f),
+                spotColor = Color(0xFF9C27B0).copy(alpha = 0.35f)
+            )
+    ) {
+        val radius = size.minDimension / 2f
+        val center = Offset(size.width / 2f, size.height / 2f)
+
+        drawCircle(
+            brush = Brush.sweepGradient(
+                colors = listOf(
+                    Color(0xFF00E5FF),
+                    Color(0xFF2979FF),
+                    Color(0xFF9C27B0),
+                    Color(0xFFFF2D95),
+                    Color(0xFF00E5FF)
+                ),
+                center = center
+            ),
+            radius = radius,
+            center = center,
+            alpha = 0.96f
+        )
+
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(
+                    Color.White.copy(alpha = 0.92f),
+                    Color.White.copy(alpha = 0.18f),
+                    Color.Transparent
+                ),
+                center = Offset(
+                    x = center.x + kotlin.math.cos(Math.toRadians(rotation.toDouble())).toFloat() * radius * 0.28f,
+                    y = center.y + kotlin.math.sin(Math.toRadians(rotation.toDouble())).toFloat() * radius * 0.28f
+                ),
+                radius = radius * 1.1f,
+                tileMode = TileMode.Clamp
+            ),
+            radius = radius,
+            center = center
+        )
+
+        drawCircle(
+            color = Color.White.copy(alpha = 0.55f),
+            radius = radius * 0.22f,
+            center = Offset(
+                x = center.x - radius * 0.32f,
+                y = center.y - radius * 0.36f
+            )
+        )
     }
 }
 
@@ -1090,13 +1424,31 @@ fun NewChatSheet(
                             .clickable { onContactSelected(contact.number) },
                         colors = ListItemDefaults.colors(
                             containerColor = Color.Transparent
-                        ))
+                        )
+                    )
                 }
             }
         }
     }
 }
 
+private fun loadMutedChats(context: Context): Set<String> {
+    return context
+        .getSharedPreferences("chat_settings", Context.MODE_PRIVATE)
+        .getStringSet("muted_chats", emptySet())
+        ?: emptySet()
+}
+
+private fun saveMutedChats(
+    context: Context,
+    mutedChats: Set<String>
+) {
+    context
+        .getSharedPreferences("chat_settings", Context.MODE_PRIVATE)
+        .edit()
+        .putStringSet("muted_chats", mutedChats)
+        .apply()
+}
 
 private fun isBankLikeMessage(
     sender: String,
