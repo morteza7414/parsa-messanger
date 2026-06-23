@@ -34,7 +34,6 @@ interface MessageDao {
     """)
     suspend fun markAsRead(address: String)
 
-    // آخرین پیام هر مکالمه + وضعیت unread
     @Query("""
         SELECT 
             m.address as address,

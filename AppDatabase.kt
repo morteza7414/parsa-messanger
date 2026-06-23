@@ -9,10 +9,9 @@ import androidx.room.RoomDatabase
     entities = [
         MessageEntity::class,
         CategoryEntity::class,
-        ChatCategoryEntity::class
+        ChatCategoryCrossRef::class
     ],
-    version = 1,
-    exportSchema = false
+    version = 4
 )
 abstract class AppDatabase : RoomDatabase() {
 
@@ -38,6 +37,7 @@ abstract class AppDatabase : RoomDatabase() {
                     .build()
 
                 INSTANCE = instance
+
                 instance
             }
         }

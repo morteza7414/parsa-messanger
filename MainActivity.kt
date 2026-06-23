@@ -66,6 +66,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomSheetDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -115,7 +116,8 @@ import com.example.parsamessenger.ui.theme.BluePrimary
 import com.example.parsamessenger.ui.theme.ParsaMessengerTheme
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
-import androidx.compose.runtime.getValue
+
+
 
 
 class MainActivity : ComponentActivity() {
@@ -225,7 +227,7 @@ fun MessengerScreen() {
     var chatToDelete by remember { mutableStateOf<Chat?>(null) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-
+    var chatToAddToCategory by remember { mutableStateOf<Chat?>(null) }
     var categoryToDelete by remember { mutableStateOf<String?>(null) }
     var selectedChat by remember { mutableStateOf<Chat?>(null) }
     var search by remember { mutableStateOf("") }
@@ -241,12 +243,20 @@ fun MessengerScreen() {
         }
     }
 
-    val categories = remember {
-        mutableStateListOf(
-            "All",
-            "Personal",
-        )
-    }
+    val categoryDao = remember { AppDatabase.getDatabase(context).categoryDao() }
+    val categoriesFromDb by categoryDao.getCategories().collectAsState(initial = emptyList())
+    val selectedCategoryEntity =
+        categoriesFromDb.find { it.title == selectedCategory }
+
+    val addressesInSelectedCategory by
+    (selectedCategoryEntity?.let {
+        categoryDao.getChatsInCategory(it.id)
+    } ?: kotlinx.coroutines.flow.flowOf(emptyList()))
+        .collectAsState(initial = emptyList())
+
+
+    val categories = listOf("All", "Personal") + categoriesFromDb.map { it.title }
+
 
     val dao = remember { AppDatabase.getDatabase(context).messageDao() }
     val roomChats by dao.getConversations().collectAsState(initial = emptyList())
@@ -266,8 +276,11 @@ fun MessengerScreen() {
         }
 
     val filteredChats = chats.filter { chat ->
+
+        val normalizedAddress = PhoneUtils.normalize(chat.name)
         val displayName = ContactNameUtils.getName(context, chat.name)
 
+        // ---------- SEARCH ----------
         val matchesSearch =
             if (showSearch && search.isNotBlank()) {
                 displayName.contains(search, ignoreCase = true) ||
@@ -277,20 +290,27 @@ fun MessengerScreen() {
                 true
             }
 
+        // ---------- CATEGORY ----------
         val matchesCategory =
             when (selectedCategory) {
+
                 "All" -> true
-                "Personal" -> !isBankLikeMessage(chat.name, chat.message)
-                "Bank" -> isBankLikeMessage(chat.name, chat.message)
+
+                "Personal" ->
+                    !isBankLikeMessage(chat.name, chat.message)
+
+                "Bank" ->
+                    isBankLikeMessage(chat.name, chat.message)
+
                 else -> {
-                    displayName.contains(selectedCategory, ignoreCase = true) ||
-                            chat.name.contains(selectedCategory, ignoreCase = true) ||
-                            chat.message.contains(selectedCategory, ignoreCase = true)
+                    // ✅ فقط اگر داخل CrossRef ذخیره شده باشد
+                    addressesInSelectedCategory.contains(normalizedAddress)
                 }
             }
 
         matchesSearch && matchesCategory
     }
+
 
     if (selectedChat != null) {
         ConversationScreen(
@@ -388,7 +408,11 @@ fun MessengerScreen() {
                         if (category != "All" && category != "Personal" && category != "Bank") {
                             categoryToDelete = category
                         }
+                    },
+                    onAddToCategory = { chat ->
+                        chatToAddToCategory = chat
                     }
+
                 )
             }
 
@@ -424,7 +448,10 @@ fun MessengerScreen() {
                     cleanTitle.isNotBlank() &&
                     categories.none { it.equals(cleanTitle, ignoreCase = true) }
                 ) {
-                    categories.add(cleanTitle)
+                    scope.launch {
+                        categoryDao.insertCategory(CategoryEntity(title = cleanTitle))
+                    }
+
                     selectedCategory = cleanTitle
                 }
                 showAddCategoryDialog = false
@@ -474,7 +501,7 @@ fun MessengerScreen() {
             confirmButton = {
                 TextButton(
                     onClick = {
-                        categories.remove(category)
+//                        categories.remove(category)
                         selectedCategory = "All"
                         categoryToDelete = null
                     }
@@ -489,6 +516,75 @@ fun MessengerScreen() {
             }
         )
     }
+
+    chatToAddToCategory?.let { chat ->
+
+        val chatAddress = PhoneUtils.normalize(chat.name)
+
+        val chatCategories by categoryDao
+            .getCategoriesForChat(chatAddress)
+            .collectAsState(initial = emptyList())
+
+        AlertDialog(
+            onDismissRequest = { chatToAddToCategory = null },
+            title = { Text("Categories") },
+
+            text = {
+                Column {
+
+                    categoriesFromDb.forEach { category ->
+
+                        val checked = chatCategories.contains(category.id)
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+
+                            Checkbox(
+                                checked = checked,
+                                onCheckedChange = { isChecked ->
+
+                                    scope.launch {
+
+                                        if (isChecked) {
+
+                                            categoryDao.addChatToCategory(
+                                                ChatCategoryCrossRef(
+                                                    address = chatAddress,
+                                                    categoryId = category.id
+                                                )
+                                            )
+
+                                        } else {
+
+                                            categoryDao.removeChatFromCategory(
+                                                chatAddress,
+                                                category.id
+                                            )
+                                        }
+                                    }
+                                }
+                            )
+
+                            Text(category.title)
+                        }
+                    }
+                }
+            },
+
+            confirmButton = {
+                TextButton(
+                    onClick = { chatToAddToCategory = null }
+                ) {
+                    Text("Done")
+                }
+            }
+        )
+    }
+
+
+
+
 }
 
 @Composable
@@ -507,7 +603,8 @@ private fun MessagesHomeContent(
     onChatClick: (Chat) -> Unit,
     onChatDeleteRequest: (Chat) -> Unit,
     onChatMuteRequest: (Chat) -> Unit,
-    onCategoryLongClick: (String) -> Unit
+    onCategoryLongClick: (String) -> Unit,
+    onAddToCategory: (Chat) -> Unit
 ) {
     Column(
         modifier = modifier.padding(horizontal = 20.dp)
@@ -566,7 +663,8 @@ private fun MessagesHomeContent(
                         isMuted = mutedChats.contains(PhoneUtils.normalize(chat.name)),
                         onClick = { onChatClick(chat) },
                         onDeleteRequest = { onChatDeleteRequest(it) },
-                        onMuteRequest = { onChatMuteRequest(it) }
+                        onMuteRequest = { onChatMuteRequest(it) },
+                        onLongClick = { onAddToCategory(chat) }
                     )
                 }
             }
@@ -762,13 +860,15 @@ private fun CategoryChipsRow(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ChatItem(
     chat: Chat,
     isMuted: Boolean,
     onClick: () -> Unit,
     onDeleteRequest: (Chat) -> Unit,
-    onMuteRequest: (Chat) -> Unit
+    onMuteRequest: (Chat) -> Unit,
+    onLongClick: () -> Unit
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -799,6 +899,9 @@ fun ChatItem(
             MaterialTheme.colorScheme.surface.copy(alpha = if (chat.isUnread) 0.78f else 0.70f)
         )
     )
+
+
+
 
     Box(
         modifier = Modifier
@@ -898,7 +1001,11 @@ fun ChatItem(
                     ),
                     shape = RoundedCornerShape(32.dp)
                 )
-                .clickable { onClick() }
+                .combinedClickable(
+                    onClick = onClick,
+                    onLongClick = onLongClick
+                )
+
         ) {
             Row(
                 modifier = Modifier
@@ -1431,6 +1538,9 @@ fun NewChatSheet(
         }
     }
 }
+
+
+
 
 private fun loadMutedChats(context: Context): Set<String> {
     return context
